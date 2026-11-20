@@ -6,13 +6,22 @@ import Queue from '../components/Queue';
 
 const ReceiverSession = () => {
   const { sessionId: sessionCodeParam } = useParams();
-  const { session, activeSpeaker, socketConnected, joinSessionByCode } = useContext(SessionContext);
+  const { session, activeSpeaker, socketConnected, joinSessionByCode, refreshQueue } = useContext(SessionContext);
 
   useEffect(() => {
     if (sessionCodeParam && (!session || session.sessionCode !== sessionCodeParam.toUpperCase())) {
       joinSessionByCode(sessionCodeParam);
     }
   }, [sessionCodeParam]);
+
+  useEffect(() => {
+    if (!session?.id) return;
+    refreshQueue(session.id);
+    const interval = setInterval(() => {
+      refreshQueue(session.id);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [session?.id]);
 
   return (
     <div style={{ maxWidth: '1100px', margin: '0 auto' }}>

@@ -9,7 +9,7 @@ import ConnectionStatus from '../components/ConnectionStatus';
 
 const ModeratorSession = () => {
   const { sessionId: sessionCodeParam } = useParams();
-  const { session, activeSpeaker, socketConnected, joinSessionByCode, endSpeaker, muteSpeaker } = useContext(SessionContext);
+  const { session, activeSpeaker, socketConnected, joinSessionByCode, refreshQueue, endSpeaker, muteSpeaker } = useContext(SessionContext);
   const [activeTab, setActiveTab] = useState('controls'); // controls, questions, analytics
 
   useEffect(() => {
@@ -17,6 +17,15 @@ const ModeratorSession = () => {
       joinSessionByCode(sessionCodeParam);
     }
   }, [sessionCodeParam]);
+
+  useEffect(() => {
+    if (!session?.id) return;
+    refreshQueue(session.id);
+    const interval = setInterval(() => {
+      refreshQueue(session.id);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [session?.id]);
 
   return (
     <div style={{ maxWidth: '1100px', margin: '0 auto' }}>

@@ -17,12 +17,25 @@ export const SessionProvider = ({ children }) => {
   const socket = socketService.getSocket();
 
   useEffect(() => {
-    socket.on('connect', () => setSocketConnected(true));
+    socket.on('connect', () => {
+      setSocketConnected(true);
+      if (session?.sessionCode) {
+        socket.emit('join_session', {
+          sessionCode: session.sessionCode.toUpperCase(),
+          userId: user?.id || user?._id,
+          name: user?.name || 'Guest',
+          role: user?.role || 'student'
+        });
+      }
+    });
     socket.on('disconnect', () => setSocketConnected(false));
 
     socket.on('joined_session', (data) => {
       setSession(data.session);
       setActiveSpeaker(data.activeSpeaker);
+      if (data.queue) {
+        setQueue(data.queue);
+      }
     });
 
     socket.on('queue_updated', (data) => {
@@ -60,21 +73,37 @@ export const SessionProvider = ({ children }) => {
     };
   }, [user]);
 
-  const joinSessionByCode = async (sessionCode) => {
-    if (sessionCode) {
-      try {
-        const res = await api.get(`/sessions/${sessionCode}`);
-        setSession(res.data);
-      } catch (e) {
-        console.error('Failed to fetch session via REST:', e);
-      }
+  const refreshQueue = async (targetSessionId = session?.id) => {
+    if (!targetSessionId) return;
+    try {
+      const qRes = await api.get(`/sessions/${targetSessionId}/queue`);
+      setQueue(qRes.data || []);
+    } catch (e) {
+      console.error('Failed to refresh queue:', e);
     }
-    if (user && sessionCode) {
+  };
+
+  const joinSessionByCode = async (sessionCode) => {
+    if (!sessionCode) return;
+    let currentSessionId = null;
+    try {
+      const res = await api.get(`/sessions/${sessionCode}`);
+      setSession(res.data);
+      currentSessionId = res.data?.id;
+      if (currentSessionId) {
+        const qRes = await api.get(`/sessions/${currentSessionId}/queue`);
+        setQueue(qRes.data || []);
+      }
+    } catch (e) {
+      console.error('Failed to fetch session via REST:', e);
+    }
+
+    if (sessionCode) {
       socket.emit('join_session', {
         sessionCode: sessionCode.toUpperCase(),
-        userId: user.id,
-        name: user.name,
-        role: user.role
+        userId: user?.id || user?._id,
+        name: user?.name || 'Guest',
+        role: user?.role || 'student'
       });
     }
   };
@@ -113,6 +142,7 @@ export const SessionProvider = ({ children }) => {
       socketConnected,
       micGranted,
       joinSessionByCode,
+      refreshQueue,
       raiseHand,
       cancelHand,
       allowSpeaker,

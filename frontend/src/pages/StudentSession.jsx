@@ -19,6 +19,7 @@ const StudentSession = () => {
     socketConnected,
     micGranted,
     joinSessionByCode,
+    refreshQueue,
     raiseHand,
     cancelHand,
     endSpeaker
@@ -32,6 +33,15 @@ const StudentSession = () => {
       joinSessionByCode(sessionCodeParam);
     }
   }, [sessionCodeParam]);
+
+  useEffect(() => {
+    if (!session?.id) return;
+    refreshQueue(session.id);
+    const interval = setInterval(() => {
+      refreshQueue(session.id);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [session?.id]);
 
   useEffect(() => {
     webrtcManager.onStateChange = (state) => {

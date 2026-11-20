@@ -38,7 +38,7 @@ async def join_session(sid, data):
 
     session_id = session["id"]
     room_name = f"session_{session_id}"
-    sio.enter_room(sid, room_name)
+    await sio.enter_room(sid, room_name)
 
     active_sockets[sid] = {
         "userId": user_id,
@@ -48,10 +48,13 @@ async def join_session(sid, data):
         "sessionId": session_id
     }
 
-    # Emit joined confirmation to client
+    queue = await get_session_queue(session_id)
+
+    # Emit joined confirmation to client with current queue
     await sio.emit("joined_session", {
         "sessionId": session_id,
         "session": session,
+        "queue": queue,
         "activeSpeaker": get_active_speaker(session_id)
     }, to=sid)
 
@@ -63,7 +66,7 @@ async def leave_session(sid, data):
     info = active_sockets.get(sid)
     if info:
         session_id = info.get("sessionId")
-        sio.leave_room(sid, f"session_{session_id}")
+        await sio.leave_room(sid, f"session_{session_id}")
         active_sockets.pop(sid, None)
         if session_id:
             await broadcast_queue_update(session_id)
@@ -81,9 +84,10 @@ async def raise_hand(sid, data):
     try:
         entry = await add_to_queue(session_id, user_id, name, role)
         await sio.emit("notification", {"type": "info", "message": f"Your hand has been raised. Position #{entry['position']}"}, to=sid)
-        await broadcast_queue_update(session_id)
     except ValueError as e:
         await sio.emit("notification", {"type": "warning", "message": str(e)}, to=sid)
+    
+    await broadcast_queue_update(session_id)
 
 @sio.event
 async def cancel_hand(sid, data):
@@ -281,8 +285,13 @@ async def broadcast_queue_update(session_id: str):
             if s_info.get("sessionId") == session_id and s_info.get("userId") == next_user_id:
                 await sio.emit("notification", {"type": "warning", "message": "You are next in queue! Get ready to speak."}, to=s_id)
 
-    await sio.emit("queue_updated", {
+    payload = {
         "sessionId": session_id,
         "queue": queue,
         "activeSpeaker": get_active_speaker(session_id)
-    }, room=room)
+    }
+    await sio.emit("queue_updated", payload, room=room)
+    # Also emit directly to individual sockets in session to guarantee delivery
+    for s_id, s_info in active_sockets.items():
+        if s_info.get("sessionId") == session_id:
+            await sio.emit("queue_updated", payload, to=s_id)
