@@ -43,9 +43,13 @@ fastapi_app.include_router(analytics.router)
 
 @fastapi_app.get("/")
 async def root():
+    from app.database.mongodb import get_database, db_instance
+    db = get_database()
     return {
         "app": "CrowdMic API",
         "status": "online",
+        "database": "connected" if db is not None else "in_memory_fallback",
+        "db_error": db_instance.last_error if db is None else None,
         "tagline": "One microphone system for thousands of voices."
     }
 

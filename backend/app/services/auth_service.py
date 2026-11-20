@@ -52,19 +52,25 @@ async def register_user(name: str, email: str, password: str, role: str) -> Dict
 
 async def login_user(email: str, password: str) -> Dict[str, Any]:
     db = get_database()
-    email_lower = email.strip().lower()
+    identifier = email.strip()
+    identifier_lower = identifier.lower()
     user_doc = None
 
     if db is not None:
-        user_doc = await db.users.find_one({"email": email_lower})
+        user_doc = await db.users.find_one({
+            "$or": [
+                {"email": identifier_lower},
+                {"name": {"$regex": f"^{identifier}$", "$options": "i"}}
+            ]
+        })
     else:
         for u in memory_store.users.values():
-            if u["email"] == email_lower:
+            if u["email"].lower() == identifier_lower or u["name"].lower() == identifier_lower:
                 user_doc = u
                 break
     
     # Auto-seed demo accounts if demo email is requested and not found
-    if not user_doc and email_lower in [
+    if not user_doc and identifier_lower in [
         "student@crowdmic.com", "moderator@crowdmic.com", "receiver@crowdmic.com", "pro@crowdmic.com"
     ]:
         role_map = {
@@ -73,15 +79,15 @@ async def login_user(email: str, password: str) -> Dict[str, Any]:
             "receiver@crowdmic.com": ("Auditorium Receiver", "receiver"),
             "pro@crowdmic.com": ("Company Professional", "professional"),
         }
-        name, role = role_map[email_lower]
-        reg_res = await register_user(name, email_lower, password, role)
+        name, role = role_map[identifier_lower]
+        reg_res = await register_user(name, identifier_lower, password, role)
         return reg_res
 
     if not user_doc or not verify_password(password, user_doc["hashed_password"]):
         raise ValueError("Invalid email or password")
     
     user_id = str(user_doc.get("_id", user_doc.get("id")))
-    token = create_access_token({"sub": user_id, "role": user_doc["role"], "name": user_doc["name"], "email": email_lower})
+    token = create_access_token({"sub": user_id, "role": user_doc["role"], "name": user_doc["name"], "email": user_doc.get("email", identifier_lower)})
     
     res_user = dict(user_doc)
     res_user["_id"] = str(res_user["_id"])

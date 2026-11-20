@@ -7,16 +7,18 @@ logger = logging.getLogger("crowdmic.database")
 class Database:
     client: AsyncIOMotorClient = None
     db = None
+    last_error: str = None
 
 db_instance = Database()
 
 async def connect_to_mongo():
     try:
         logger.info(f"Connecting to MongoDB at {settings.MONGODB_URI}...")
-        db_instance.client = AsyncIOMotorClient(settings.MONGODB_URI, serverSelectionTimeoutMS=3000)
+        db_instance.client = AsyncIOMotorClient(settings.MONGODB_URI, serverSelectionTimeoutMS=5000)
         # Verify connection
         await db_instance.client.admin.command('ping')
         db_instance.db = db_instance.client[settings.DATABASE_NAME]
+        db_instance.last_error = None
         logger.info(f"Connected to MongoDB database: {settings.DATABASE_NAME}")
 
         # Create indexes
@@ -26,6 +28,7 @@ async def connect_to_mongo():
     except Exception as e:
         logger.warning(f"MongoDB connection failed: {e}. Falling back to in-memory store mode for development.")
         db_instance.db = None
+        db_instance.last_error = str(e)
 
 async def close_mongo_connection():
     if db_instance.client:
