@@ -15,10 +15,16 @@ services:
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: "1440"
       - key: STUN_SERVER
-        value: stun:stun.l.google.com:19002
+        value: stun:stun.l.google.com:19302
+      - key: TURN_SERVER
+        value: turn:openrelay.metered.ca:80
+      - key: TURN_USERNAME
+        value: openrelayproject
+      - key: TURN_PASSWORD
+        value: openrelayproject
       - key: MONGODB_URI
         sync: false
       - key: FRONTEND_URL
-        sync: false
+        value: https://crowd-mic.vercel.app
       - key: JWT_SECRET
         generateValue: true
