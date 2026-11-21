@@ -65,9 +65,9 @@ function App() {
                 <Route path="/moderator/dashboard" element={<ProtectedRoute allowedRoles={['moderator', 'admin']}><ModeratorDashboard /></ProtectedRoute>} />
                 <Route path="/moderator/session/:sessionId" element={<ProtectedRoute allowedRoles={['moderator', 'admin']}><ModeratorSession /></ProtectedRoute>} />
 
-                {/* Receiver Routes */}
-                <Route path="/receiver" element={<ProtectedRoute allowedRoles={['receiver', 'admin']}><Receiver /></ProtectedRoute>} />
-                <Route path="/receiver/session/:sessionId" element={<ProtectedRoute allowedRoles={['receiver', 'admin']}><ReceiverSession /></ProtectedRoute>} />
+                {/* Receiver Routes (Accessible by any attendee/moderator device acting as auditorium speaker) */}
+                <Route path="/receiver" element={<ProtectedRoute allowedRoles={['receiver', 'admin', 'moderator', 'student', 'professional']}><Receiver /></ProtectedRoute>} />
+                <Route path="/receiver/session/:sessionId" element={<ProtectedRoute allowedRoles={['receiver', 'admin', 'moderator', 'student', 'professional']}><ReceiverSession /></ProtectedRoute>} />
 
                 {/* Admin Routes */}
                 <Route path="/admin/dashboard" element={<ProtectedRoute allowedRoles={['admin']}><AdminDashboard /></ProtectedRoute>} />

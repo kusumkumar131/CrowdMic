@@ -2,11 +2,33 @@ import socketService from './socket';
 
 const rtcConfig = {
   iceServers: [
-    { urls: 'stun:stun.l.google.com:19002' },
-    { urls: 'stun:stun1.l.google.com:19002' },
-    { urls: 'stun:stun2.l.google.com:19002' },
-    { urls: 'stun:stun.services.mozilla.com' }
-  ]
+    // Standard Google STUN servers (fixed port 19302)
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:stun.services.mozilla.com' },
+    // OpenRelay Public STUN
+    { urls: 'stun:openrelay.metered.ca:80' },
+    // OpenRelay Public TURN Relay servers (UDP & TCP for CGNAT/cellular mobile traversal)
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
+  ],
+  iceCandidatePoolSize: 10
 };
 
 export class WebRTCManager {
@@ -17,6 +39,8 @@ export class WebRTCManager {
     this.socket = socketService.getSocket();
     this.connectionState = 'disconnected';
     this.audioElement = null;
+    this.audioContext = null;
+    this.audioSourceNode = null;
     this.role = null;
     this.sessionId = null;
     this.candidateQueue = [];
@@ -34,15 +58,16 @@ export class WebRTCManager {
   }
 
   setupSocketListeners() {
-    // 1. WebRTC Offer
+    // 1. WebRTC Offer (Receiver handles incoming stream)
     this.socket.on('webrtc_offer', async (data) => {
       console.log('Received WebRTC offer from speaker:', data.senderName, 'role:', this.role);
-      if (this.role === 'receiver') {
+      // Handle offer if role is receiver or if audio element is registered
+      if (this.role === 'receiver' || this.audioElement || window.location.pathname.includes('/receiver')) {
         await this.handleOfferAndCreateAnswer(data);
       }
     });
 
-    // 2. WebRTC Answer
+    // 2. WebRTC Answer (Speaker handles response from receiver)
     this.socket.on('webrtc_answer', async (data) => {
       console.log('Received WebRTC answer on speaker');
       if (this.peerConnection && data.sdp) {
@@ -96,7 +121,7 @@ export class WebRTCManager {
   }
 
   /**
-   * Speaker (Student / Professional) Microphone Initialization
+   * Speaker (Student Phone / Laptop Microphone Initialization)
    */
   async startMicrophone(sessionId, userRole = 'student') {
     this.role = 'publisher';
@@ -111,7 +136,8 @@ export class WebRTCManager {
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true
+          autoGainControl: true,
+          channelCount: 1
         },
         video: false
       });
@@ -156,7 +182,10 @@ export class WebRTCManager {
       };
 
       // 5. Create SDP Offer
-      const offer = await this.peerConnection.createOffer();
+      const offer = await this.peerConnection.createOffer({
+        offerToReceiveAudio: false,
+        offerToReceiveVideo: false
+      });
       await this.peerConnection.setLocalDescription(offer);
 
       // 6. Send Offer via Socket.IO
@@ -231,6 +260,7 @@ export class WebRTCManager {
         }
         this.remoteStream = stream;
 
+        // Route to HTML5 audio element
         if (this.audioElement) {
           this.audioElement.srcObject = stream;
           this.audioElement.volume = 1.0;
@@ -247,6 +277,25 @@ export class WebRTCManager {
             });
           }
         }
+
+        // Web Audio API playback route for absolute reliability
+        try {
+          if (!this.audioContext) {
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          }
+          if (this.audioContext.state === 'suspended') {
+            this.audioContext.resume();
+          }
+          if (this.audioSourceNode) {
+            this.audioSourceNode.disconnect();
+          }
+          this.audioSourceNode = this.audioContext.createMediaStreamSource(stream);
+          this.audioSourceNode.connect(this.audioContext.destination);
+          console.log('Web Audio Context connected to speakers');
+        } catch (e) {
+          console.log('Web Audio Context setup note:', e);
+        }
+
         this.updateState('receiving');
       };
 
@@ -277,9 +326,26 @@ export class WebRTCManager {
    * Unlock audio playback with explicit user gesture
    */
   async unlockAudio() {
+    // 1. Resume AudioContext
+    try {
+      if (!this.audioContext) {
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (this.audioContext.state === 'suspended') {
+        await this.audioContext.resume();
+      }
+    } catch (e) {
+      console.log('AudioContext unlock note:', e);
+    }
+
+    // 2. Play HTML5 audio element
     if (this.audioElement) {
       try {
         this.audioElement.muted = false;
+        this.audioElement.volume = 1.0;
+        if (this.remoteStream) {
+          this.audioElement.srcObject = this.remoteStream;
+        }
         await this.audioElement.play();
         return true;
       } catch (err) {
@@ -287,7 +353,7 @@ export class WebRTCManager {
         return true;
       }
     }
-    return false;
+    return true;
   }
 
   /**

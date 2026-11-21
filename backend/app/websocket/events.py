@@ -112,6 +112,7 @@ async def allow_speaker(sid, data):
         return
 
     session_id = info["sessionId"]
+    session_code = info.get("sessionCode")
     target_entry_id = data.get("entryId")
     target_user_id = data.get("userId")
     target_user_name = data.get("userName")
@@ -124,7 +125,7 @@ async def allow_speaker(sid, data):
         "role": "student",
         "startedAt": str(data.get("startedAt", ""))
     }
-    set_active_speaker(session_id, speaker_info)
+    set_active_speaker(session_id, speaker_info, session_code)
 
     # Notify session room
     room = f"session_{session_id}"
@@ -151,9 +152,10 @@ async def end_speaker(sid, data):
         return
 
     session_id = info["sessionId"]
-    current_speaker = get_active_speaker(session_id)
+    session_code = info.get("sessionCode")
+    current_speaker = get_active_speaker(session_id) or (session_code and get_active_speaker(session_code))
     
-    set_active_speaker(session_id, None)
+    set_active_speaker(session_id, None, session_code)
 
     # Find speaking entry and mark completed
     queue = await get_session_queue(session_id)
@@ -185,6 +187,7 @@ async def allow_professional_mic(sid, data):
     if not info or info.get("role") not in ["moderator", "admin"]:
         return
     session_id = info["sessionId"]
+    session_code = info.get("sessionCode")
     target_user_id = data.get("userId")
     target_user_name = data.get("userName")
 
@@ -193,7 +196,7 @@ async def allow_professional_mic(sid, data):
         "name": target_user_name,
         "role": "professional"
     }
-    set_active_speaker(session_id, speaker_info)
+    set_active_speaker(session_id, speaker_info, session_code)
 
     room = f"session_{session_id}"
     await sio.emit("speaker_allowed", {
@@ -213,19 +216,24 @@ async def webrtc_offer(sid, data):
         logger.warning(f"webrtc_offer: sid {sid} not found in active_sockets")
         return
     session_id = info["sessionId"]
+    session_code = info.get("sessionCode")
     user_id = info["userId"]
     user_role = info["role"]
 
-    current_speaker = get_active_speaker(session_id)
+    current_speaker = get_active_speaker(session_id) or (session_code and get_active_speaker(session_code))
     if not current_speaker and user_role != "professional":
         logger.warning(f"Unauthorized WebRTC offer attempt by {user_id}")
         return
 
     logger.info(f"Forwarding WebRTC offer from {info.get('name')} (role {user_role}) for session {session_id}")
     receivers_found = 0
-    # Forward offer to receiver sockets in the session room
+    # Forward offer to receiver/admin/moderator sockets in the session
     for s_id, s_info in active_sockets.items():
-        if s_info.get("sessionId") == session_id and s_info.get("role") in ["receiver", "admin"]:
+        is_same_session = (
+            s_info.get("sessionId") == session_id or
+            (session_code and s_info.get("sessionCode") == session_code)
+        )
+        if is_same_session and s_info.get("role") in ["receiver", "admin", "moderator"]:
             await sio.emit("webrtc_offer", {
                 "sdp": data.get("sdp"),
                 "senderUserId": user_id,
@@ -245,12 +253,17 @@ async def webrtc_answer(sid, data):
     if not info:
         return
     session_id = info["sessionId"]
+    session_code = info.get("sessionCode")
     target_user_id = data.get("targetUserId")
     logger.info(f"Forwarding WebRTC answer from receiver {sid} to target user {target_user_id}")
 
     answers_sent = 0
     for s_id, s_info in active_sockets.items():
-        if s_info.get("sessionId") == session_id and s_info.get("userId") == target_user_id:
+        is_same_session = (
+            s_info.get("sessionId") == session_id or
+            (session_code and s_info.get("sessionCode") == session_code)
+        )
+        if is_same_session and str(s_info.get("userId")) == str(target_user_id):
             await sio.emit("webrtc_answer", {
                 "sdp": data.get("sdp")
             }, to=s_id)
@@ -266,17 +279,26 @@ async def webrtc_ice_candidate(sid, data):
     if not info:
         return
     session_id = info["sessionId"]
+    session_code = info.get("sessionCode")
     user_role = info["role"]
     target_user_id = data.get("targetUserId")
 
-    if user_role in ["receiver", "admin"] and target_user_id:
+    if user_role in ["receiver", "admin", "moderator"] and target_user_id:
         for s_id, s_info in active_sockets.items():
-            if s_info.get("sessionId") == session_id and s_info.get("userId") == target_user_id:
+            is_same_session = (
+                s_info.get("sessionId") == session_id or
+                (session_code and s_info.get("sessionCode") == session_code)
+            )
+            if is_same_session and str(s_info.get("userId")) == str(target_user_id):
                 await sio.emit("webrtc_ice_candidate", {"candidate": data.get("candidate")}, to=s_id)
     else:
         # Forward candidate from speaker to receiver sockets
         for s_id, s_info in active_sockets.items():
-            if s_info.get("sessionId") == session_id and s_info.get("role") in ["receiver", "admin"]:
+            is_same_session = (
+                s_info.get("sessionId") == session_id or
+                (session_code and s_info.get("sessionCode") == session_code)
+            )
+            if is_same_session and s_info.get("role") in ["receiver", "admin", "moderator"]:
                 await sio.emit("webrtc_ice_candidate", {
                     "candidate": data.get("candidate"),
                     "senderUserId": info.get("userId")
