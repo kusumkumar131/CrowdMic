@@ -3,7 +3,9 @@ import socketService from './socket';
 const rtcConfig = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19002' },
-    { urls: 'stun:stun1.l.google.com:19002' }
+    { urls: 'stun:stun1.l.google.com:19002' },
+    { urls: 'stun:stun2.l.google.com:19002' },
+    { urls: 'stun:stun.services.mozilla.com' }
   ]
 };
 
@@ -15,40 +17,75 @@ export class WebRTCManager {
     this.socket = socketService.getSocket();
     this.connectionState = 'disconnected';
     this.audioElement = null;
+    this.role = null;
+    this.sessionId = null;
+    this.candidateQueue = [];
     this.onStateChange = null;
+    this.onAutoplayBlocked = null;
 
     this.setupSocketListeners();
   }
 
   setAudioElement(element) {
     this.audioElement = element;
+    if (this.audioElement && this.remoteStream) {
+      this.audioElement.srcObject = this.remoteStream;
+    }
   }
 
   setupSocketListeners() {
+    // 1. WebRTC Offer
     this.socket.on('webrtc_offer', async (data) => {
-      console.log('Received WebRTC offer from speaker:', data.senderName);
+      console.log('Received WebRTC offer from speaker:', data.senderName, 'role:', this.role);
       if (this.role === 'receiver') {
         await this.handleOfferAndCreateAnswer(data);
       }
     });
 
+    // 2. WebRTC Answer
     this.socket.on('webrtc_answer', async (data) => {
-      console.log('Received WebRTC answer');
+      console.log('Received WebRTC answer on speaker');
       if (this.peerConnection && data.sdp) {
-        await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
-        this.updateState('connected');
-      }
-    });
-
-    this.socket.on('webrtc_ice_candidate', async (data) => {
-      if (this.peerConnection && data.candidate) {
         try {
-          await this.peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-        } catch (e) {
-          console.error('Error adding ICE candidate:', e);
+          await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          console.log('Remote description set on speaker! Flushing candidate queue...');
+          await this.flushCandidateQueue();
+          this.updateState('connected');
+        } catch (err) {
+          console.error('Failed to set remote description on speaker:', err);
         }
       }
     });
+
+    // 3. WebRTC ICE Candidate
+    this.socket.on('webrtc_ice_candidate', async (data) => {
+      if (!data.candidate) return;
+      const candidate = new RTCIceCandidate(data.candidate);
+
+      if (this.peerConnection && this.peerConnection.remoteDescription && this.peerConnection.remoteDescription.type) {
+        try {
+          await this.peerConnection.addIceCandidate(candidate);
+        } catch (e) {
+          console.error('Error adding ICE candidate:', e);
+        }
+      } else {
+        // Queue candidate until setRemoteDescription finishes
+        this.candidateQueue.push(candidate);
+      }
+    });
+  }
+
+  async flushCandidateQueue() {
+    while (this.candidateQueue.length > 0) {
+      const cand = this.candidateQueue.shift();
+      if (this.peerConnection) {
+        try {
+          await this.peerConnection.addIceCandidate(cand);
+        } catch (err) {
+          console.error('Error adding queued ICE candidate:', err);
+        }
+      }
+    }
   }
 
   updateState(state) {
@@ -63,6 +100,9 @@ export class WebRTCManager {
    */
   async startMicrophone(sessionId, userRole = 'student') {
     this.role = 'publisher';
+    this.sessionId = sessionId;
+    this.candidateQueue = [];
+
     try {
       this.updateState('connecting');
 
@@ -77,6 +117,9 @@ export class WebRTCManager {
       });
 
       // 2. Create RTCPeerConnection
+      if (this.peerConnection) {
+        this.peerConnection.close();
+      }
       this.peerConnection = new RTCPeerConnection(rtcConfig);
 
       // 3. Add audio track
@@ -94,8 +137,20 @@ export class WebRTCManager {
         }
       };
 
+      this.peerConnection.oniceconnectionstatechange = () => {
+        if (this.peerConnection) {
+          console.log('Speaker ICE Connection State:', this.peerConnection.iceConnectionState);
+          if (this.peerConnection.iceConnectionState === 'connected' || this.peerConnection.iceConnectionState === 'completed') {
+            this.updateState('connected');
+          } else if (this.peerConnection.iceConnectionState === 'failed' || this.peerConnection.iceConnectionState === 'disconnected') {
+            this.updateState(this.peerConnection.iceConnectionState);
+          }
+        }
+      };
+
       this.peerConnection.onconnectionstatechange = () => {
         if (this.peerConnection) {
+          console.log('Speaker Connection State:', this.peerConnection.connectionState);
           this.updateState(this.peerConnection.connectionState);
         }
       };
@@ -125,6 +180,7 @@ export class WebRTCManager {
   async initReceiver(sessionId) {
     this.role = 'receiver';
     this.sessionId = sessionId;
+    this.candidateQueue = [];
     this.updateState('listening');
   }
 
@@ -137,23 +193,14 @@ export class WebRTCManager {
       }
 
       this.peerConnection = new RTCPeerConnection(rtcConfig);
-      this.remoteStream = new MediaStream();
+      this.candidateQueue = [];
 
-      if (this.audioElement) {
-        this.audioElement.srcObject = this.remoteStream;
+      // Ensure transceiver is set to receive audio
+      try {
+        this.peerConnection.addTransceiver('audio', { direction: 'recvonly' });
+      } catch (e) {
+        console.log('addTransceiver not supported or already configured:', e);
       }
-
-      this.peerConnection.ontrack = (event) => {
-        console.log('Received remote audio track!');
-        event.streams[0].getTracks().forEach((track) => {
-          this.remoteStream.addTrack(track);
-        });
-
-        if (this.audioElement) {
-          this.audioElement.play().catch(e => console.log('Audio autoplay prevented:', e));
-        }
-        this.updateState('receiving');
-      };
 
       this.peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
@@ -165,10 +212,55 @@ export class WebRTCManager {
         }
       };
 
+      this.peerConnection.oniceconnectionstatechange = () => {
+        if (this.peerConnection) {
+          console.log('Receiver ICE Connection State:', this.peerConnection.iceConnectionState);
+          if (this.peerConnection.iceConnectionState === 'connected' || this.peerConnection.iceConnectionState === 'completed') {
+            this.updateState('receiving');
+          }
+        }
+      };
+
+      this.peerConnection.ontrack = (event) => {
+        console.log('Received remote audio track:', event.track);
+        let stream = null;
+        if (event.streams && event.streams[0]) {
+          stream = event.streams[0];
+        } else {
+          stream = new MediaStream([event.track]);
+        }
+        this.remoteStream = stream;
+
+        if (this.audioElement) {
+          this.audioElement.srcObject = stream;
+          this.audioElement.volume = 1.0;
+          this.audioElement.muted = false;
+          const playPromise = this.audioElement.play();
+          if (playPromise !== undefined) {
+            playPromise.then(() => {
+              console.log('Audio playing successfully on receiver speakers!');
+            }).catch(e => {
+              console.warn('Audio play was prevented by browser autoplay policy:', e);
+              if (this.onAutoplayBlocked) {
+                this.onAutoplayBlocked();
+              }
+            });
+          }
+        }
+        this.updateState('receiving');
+      };
+
+      // Set remote offer
       await this.peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+
+      // Flush candidates that arrived before offer was set
+      await this.flushCandidateQueue();
+
+      // Create and set local answer
       const answer = await this.peerConnection.createAnswer();
       await this.peerConnection.setLocalDescription(answer);
 
+      // Emit answer to speaker
       this.socket.emit('webrtc_answer', {
         sdp: answer,
         targetUserId: data.senderUserId,
@@ -179,6 +271,23 @@ export class WebRTCManager {
       console.error('Error handling WebRTC offer on receiver:', error);
       this.updateState('error');
     }
+  }
+
+  /**
+   * Unlock audio playback with explicit user gesture
+   */
+  async unlockAudio() {
+    if (this.audioElement) {
+      try {
+        this.audioElement.muted = false;
+        await this.audioElement.play();
+        return true;
+      } catch (err) {
+        console.log('Unlocked audio element context');
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

@@ -210,6 +210,7 @@ async def webrtc_offer(sid, data):
     """
     info = active_sockets.get(sid)
     if not info:
+        logger.warning(f"webrtc_offer: sid {sid} not found in active_sockets")
         return
     session_id = info["sessionId"]
     user_id = info["userId"]
@@ -220,16 +221,19 @@ async def webrtc_offer(sid, data):
         logger.warning(f"Unauthorized WebRTC offer attempt by {user_id}")
         return
 
+    logger.info(f"Forwarding WebRTC offer from {info.get('name')} (role {user_role}) for session {session_id}")
+    receivers_found = 0
     # Forward offer to receiver sockets in the session room
-    room = f"session_{session_id}"
     for s_id, s_info in active_sockets.items():
-        if s_info.get("sessionId") == session_id and s_info.get("role") == "receiver":
+        if s_info.get("sessionId") == session_id and s_info.get("role") in ["receiver", "admin"]:
             await sio.emit("webrtc_offer", {
                 "sdp": data.get("sdp"),
                 "senderUserId": user_id,
                 "senderName": info.get("name"),
                 "senderRole": user_role
             }, to=s_id)
+            receivers_found += 1
+    logger.info(f"WebRTC offer forwarded to {receivers_found} receiver(s)")
 
 @sio.event
 async def webrtc_answer(sid, data):
@@ -242,12 +246,16 @@ async def webrtc_answer(sid, data):
         return
     session_id = info["sessionId"]
     target_user_id = data.get("targetUserId")
+    logger.info(f"Forwarding WebRTC answer from receiver {sid} to target user {target_user_id}")
 
+    answers_sent = 0
     for s_id, s_info in active_sockets.items():
         if s_info.get("sessionId") == session_id and s_info.get("userId") == target_user_id:
             await sio.emit("webrtc_answer", {
                 "sdp": data.get("sdp")
             }, to=s_id)
+            answers_sent += 1
+    logger.info(f"WebRTC answer forwarded to {answers_sent} speaker socket(s)")
 
 @sio.event
 async def webrtc_ice_candidate(sid, data):
@@ -261,14 +269,14 @@ async def webrtc_ice_candidate(sid, data):
     user_role = info["role"]
     target_user_id = data.get("targetUserId")
 
-    if user_role == "receiver" and target_user_id:
+    if user_role in ["receiver", "admin"] and target_user_id:
         for s_id, s_info in active_sockets.items():
             if s_info.get("sessionId") == session_id and s_info.get("userId") == target_user_id:
                 await sio.emit("webrtc_ice_candidate", {"candidate": data.get("candidate")}, to=s_id)
     else:
         # Forward candidate from speaker to receiver sockets
         for s_id, s_info in active_sockets.items():
-            if s_info.get("sessionId") == session_id and s_info.get("role") == "receiver":
+            if s_info.get("sessionId") == session_id and s_info.get("role") in ["receiver", "admin"]:
                 await sio.emit("webrtc_ice_candidate", {
                     "candidate": data.get("candidate"),
                     "senderUserId": info.get("userId")

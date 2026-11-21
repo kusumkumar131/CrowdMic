@@ -10,7 +10,7 @@ const ReceiverSession = () => {
 
   useEffect(() => {
     if (sessionCodeParam && (!session || session.sessionCode !== sessionCodeParam.toUpperCase())) {
-      joinSessionByCode(sessionCodeParam);
+      joinSessionByCode(sessionCodeParam, 'receiver');
     }
   }, [sessionCodeParam]);
 

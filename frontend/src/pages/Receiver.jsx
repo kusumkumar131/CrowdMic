@@ -25,7 +25,7 @@ const Receiver = () => {
   const handleJoin = (code) => {
     const c = code || sessionCode;
     if (c) {
-      joinSessionByCode(c);
+      joinSessionByCode(c, 'receiver');
       navigate(`/receiver/session/${c.toUpperCase()}`);
     }
   };

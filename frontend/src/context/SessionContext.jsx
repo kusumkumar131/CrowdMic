@@ -83,7 +83,7 @@ export const SessionProvider = ({ children }) => {
     }
   };
 
-  const joinSessionByCode = async (sessionCode) => {
+  const joinSessionByCode = async (sessionCode, overrideRole = null) => {
     if (!sessionCode) return;
     let currentSessionId = null;
     try {
@@ -98,12 +98,13 @@ export const SessionProvider = ({ children }) => {
       console.error('Failed to fetch session via REST:', e);
     }
 
+    const effectiveRole = overrideRole || user?.role || 'student';
     if (sessionCode) {
       socket.emit('join_session', {
         sessionCode: sessionCode.toUpperCase(),
         userId: user?.id || user?._id,
         name: user?.name || 'Guest',
-        role: user?.role || 'student'
+        role: effectiveRole
       });
     }
   };
