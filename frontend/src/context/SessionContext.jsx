@@ -109,12 +109,37 @@ export const SessionProvider = ({ children }) => {
     }
   };
 
-  const raiseHand = () => {
-    socket.emit('raise_hand', {});
+  const raiseHand = async () => {
+    const sId = session?.id || session?.sessionCode;
+    const uId = user?.id || user?._id;
+    socket.emit('raise_hand', {
+      sessionId: sId,
+      userId: uId,
+      name: user?.name || 'Student',
+      role: user?.role || 'student'
+    });
+    // Dual channel: also call REST API join_queue so it is guaranteed to persist immediately
+    if (sId) {
+      try {
+        await api.post(`/sessions/${sId}/queue`);
+        await refreshQueue(sId);
+      } catch (e) {
+        // Handled if already queued
+      }
+    }
   };
 
-  const cancelHand = () => {
+  const cancelHand = async () => {
+    const sId = session?.id || session?.sessionCode;
     socket.emit('cancel_hand', {});
+    if (sId) {
+      try {
+        await api.delete(`/sessions/${sId}/queue`);
+        await refreshQueue(sId);
+      } catch (e) {
+        // Handled
+      }
+    }
   };
 
   const allowSpeaker = (entryId, userId, userName) => {

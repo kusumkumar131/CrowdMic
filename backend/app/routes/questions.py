@@ -7,6 +7,7 @@ from app.routes.auth import get_current_user
 from app.database.mongodb import get_database
 from app.services.memory_store import memory_store
 from app.services.ai_service import detect_duplicates_and_prioritize
+from app.services.queue_service import _resolve_session_identifiers
 
 router = APIRouter(prefix="/sessions/{session_id}/questions", tags=["questions"])
 
@@ -16,8 +17,9 @@ class CreateQuestionRequest(BaseModel):
 @router.get("")
 async def get_questions(session_id: str, current_user: dict = Depends(get_current_user)):
     db = get_database()
+    session_ids, _ = await _resolve_session_identifiers(session_id)
     if db is not None:
-        cursor = db.questions.find({"sessionId": session_id}).sort("priorityScore", -1)
+        cursor = db.questions.find({"sessionId": {"$in": session_ids}}).sort("priorityScore", -1)
         questions = []
         async for doc in cursor:
             doc["_id"] = str(doc["_id"])
@@ -25,26 +27,27 @@ async def get_questions(session_id: str, current_user: dict = Depends(get_curren
             questions.append(doc)
         return questions
     else:
-        q_list = [q for q in memory_store.questions.values() if q["sessionId"] == session_id]
+        q_list = [q for q in memory_store.questions.values() if q["sessionId"] in session_ids]
         return sorted(q_list, key=lambda x: x.get("priorityScore", 1.0), reverse=True)
 
 @router.post("")
 async def post_question(session_id: str, req: CreateQuestionRequest, current_user: dict = Depends(get_current_user)):
     db = get_database()
+    session_ids, canonical_id = await _resolve_session_identifiers(session_id)
     
     # Get existing questions for similarity check
     existing_questions = []
     if db is not None:
-        cursor = db.questions.find({"sessionId": session_id})
+        cursor = db.questions.find({"sessionId": {"$in": session_ids}})
         async for doc in cursor:
             existing_questions.append(doc)
     else:
-        existing_questions = [q for q in memory_store.questions.values() if q["sessionId"] == session_id]
+        existing_questions = [q for q in memory_store.questions.values() if q["sessionId"] in session_ids]
 
     is_dup, sim_score, priority_score, category = detect_duplicates_and_prioritize(req.text, existing_questions)
 
     question_doc = {
-        "sessionId": session_id,
+        "sessionId": canonical_id,
         "userId": current_user.get("id"),
         "userName": current_user.get("name"),
         "text": req.text.strip(),

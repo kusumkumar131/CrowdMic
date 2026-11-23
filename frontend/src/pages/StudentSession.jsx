@@ -70,9 +70,11 @@ const StudentSession = () => {
     endSpeaker();
   };
 
-  const myQueueEntry = queue.find((q) => user && q.userId === user.id);
+  const myUserId = user?.id || user?._id;
+  const myQueueEntry = queue.find((q) => myUserId && String(q.userId) === String(myUserId));
   const inQueue = Boolean(myQueueEntry);
   const queuePosition = myQueueEntry ? myQueueEntry.position : null;
+  const effectiveRtcStatus = isLive ? rtcStatus : (micGranted ? 'ready' : 'standby');
 
   return (
     <div style={{ maxWidth: '900px', margin: '0 auto' }}>
@@ -85,7 +87,7 @@ const StudentSession = () => {
             </h2>
           </div>
 
-          <ConnectionStatus socketStatus={socketConnected} rtcStatus={rtcStatus} micStatus={isLive} />
+          <ConnectionStatus socketStatus={socketConnected} rtcStatus={effectiveRtcStatus} micStatus={isLive} />
         </div>
       </div>
 

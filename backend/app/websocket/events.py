@@ -2,7 +2,7 @@ import logging
 from app.websocket.socket_manager import sio, active_sockets, active_speakers, get_active_speaker, set_active_speaker
 from app.services.session_service import get_session_by_code_or_id
 from app.services.queue_service import (
-    add_to_queue, get_session_queue, update_queue_entry_status, cancel_user_hand, recalculate_queue_positions
+    add_to_queue, get_session_queue, update_queue_entry_status, cancel_user_hand, recalculate_queue_positions, _resolve_session_identifiers
 )
 
 logger = logging.getLogger("crowdmic.events")
@@ -37,11 +37,14 @@ async def join_session(sid, data):
         return
 
     session_id = session["id"]
+    session_code = session.get("sessionCode", session_code)
     room_name = f"session_{session_id}"
     await sio.enter_room(sid, room_name)
+    if session_code:
+        await sio.enter_room(sid, f"session_{session_code}")
 
     active_sockets[sid] = {
-        "userId": user_id,
+        "userId": str(user_id) if user_id is not None else "",
         "name": name,
         "role": role,
         "sessionCode": session_code,
@@ -55,7 +58,7 @@ async def join_session(sid, data):
         "sessionId": session_id,
         "session": session,
         "queue": queue,
-        "activeSpeaker": get_active_speaker(session_id)
+        "activeSpeaker": get_active_speaker(session_id) or get_active_speaker(session_code)
     }, to=sid)
 
     # Emit updated queue state
@@ -66,7 +69,10 @@ async def leave_session(sid, data):
     info = active_sockets.get(sid)
     if info:
         session_id = info.get("sessionId")
+        session_code = info.get("sessionCode")
         await sio.leave_room(sid, f"session_{session_id}")
+        if session_code:
+            await sio.leave_room(sid, f"session_{session_code}")
         active_sockets.pop(sid, None)
         if session_id:
             await broadcast_queue_update(session_id)
@@ -75,11 +81,24 @@ async def leave_session(sid, data):
 async def raise_hand(sid, data):
     info = active_sockets.get(sid)
     if not info:
-        return
-    session_id = info["sessionId"]
-    user_id = info["userId"]
-    name = info["name"]
-    role = info["role"]
+        session_id = data.get("sessionId")
+        user_id = data.get("userId")
+        name = data.get("name", "Student")
+        role = data.get("role", "student")
+        if not session_id or not user_id:
+            return
+        active_sockets[sid] = {
+            "userId": str(user_id),
+            "name": name,
+            "role": role,
+            "sessionCode": data.get("sessionCode", ""),
+            "sessionId": session_id
+        }
+    else:
+        session_id = info["sessionId"]
+        user_id = info["userId"]
+        name = info["name"]
+        role = info["role"]
 
     try:
         entry = await add_to_queue(session_id, user_id, name, role)
@@ -305,23 +324,36 @@ async def webrtc_ice_candidate(sid, data):
                 }, to=s_id)
 
 async def broadcast_queue_update(session_id: str):
-    queue = await get_session_queue(session_id)
-    room = f"session_{session_id}"
+    session_ids, canonical_id = await _resolve_session_identifiers(session_id)
+    queue = await get_session_queue(canonical_id)
 
     # Notify next speaker if position #1
     if queue and queue[0]["status"] == "next":
-        next_user_id = queue[0]["userId"]
+        next_user_id = str(queue[0]["userId"])
         for s_id, s_info in active_sockets.items():
-            if s_info.get("sessionId") == session_id and s_info.get("userId") == next_user_id:
+            is_same = (
+                s_info.get("sessionId") in session_ids or
+                (s_info.get("sessionCode") and s_info.get("sessionCode") in session_ids)
+            )
+            if is_same and str(s_info.get("userId")) == next_user_id:
                 await sio.emit("notification", {"type": "warning", "message": "You are next in queue! Get ready to speak."}, to=s_id)
 
+    active_spk = get_active_speaker(canonical_id) or get_active_speaker(session_id)
     payload = {
-        "sessionId": session_id,
+        "sessionId": canonical_id,
         "queue": queue,
-        "activeSpeaker": get_active_speaker(session_id)
+        "activeSpeaker": active_spk
     }
-    await sio.emit("queue_updated", payload, room=room)
+
+    # Emit to all room variations (canonical ID and session code)
+    for s_room in session_ids:
+        await sio.emit("queue_updated", payload, room=f"session_{s_room}")
+
     # Also emit directly to individual sockets in session to guarantee delivery
     for s_id, s_info in active_sockets.items():
-        if s_info.get("sessionId") == session_id:
+        is_same = (
+            s_info.get("sessionId") in session_ids or
+            (s_info.get("sessionCode") and s_info.get("sessionCode") in session_ids)
+        )
+        if is_same:
             await sio.emit("queue_updated", payload, to=s_id)

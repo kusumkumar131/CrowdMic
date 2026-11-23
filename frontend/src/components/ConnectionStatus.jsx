@@ -10,6 +10,10 @@ const ConnectionStatus = ({ socketStatus, rtcStatus, micStatus }) => {
       case 'connecting':
       case 'listening':
         return { label: '🟡 Connecting...', class: 'warning' };
+      case 'ready':
+        return { label: '🟢 Mic Ready', class: 'active' };
+      case 'standby':
+        return { label: '🟡 Standby', class: 'warning' };
       default:
         return { label: '🔴 Disconnected', class: 'offline' };
     }

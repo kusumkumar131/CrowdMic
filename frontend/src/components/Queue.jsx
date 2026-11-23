@@ -21,7 +21,8 @@ const Queue = ({ isModerator = false }) => {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           {queue.map((entry, index) => {
-            const isUserSelf = user && user.id === entry.userId;
+            const myUserId = user?.id || user?._id;
+            const isUserSelf = myUserId && String(myUserId) === String(entry.userId);
 
             return (
               <div
