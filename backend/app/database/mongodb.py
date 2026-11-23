@@ -27,11 +27,20 @@ async def connect_to_mongo():
         db_instance.last_error = None
         logger.info(f"Connected to MongoDB database: {db_name}")
 
-        # Create indexes
+        # Create indexes safely (non-unique for queue entries to support multiple question turns)
         try:
             await db_instance.db.users.create_index("email", unique=True)
             await db_instance.db.sessions.create_index("sessionCode", unique=True)
-            await db_instance.db.queue_entries.create_index([("sessionId", 1), ("userId", 1)], unique=True)
+            
+            # Drop obsolete restrictive unique index if it exists
+            try:
+                await db_instance.db.queue_entries.drop_index("sessionId_1_userId_1")
+            except Exception:
+                pass
+
+            await db_instance.db.queue_entries.create_index([("sessionId", 1), ("status", 1)])
+            await db_instance.db.queue_entries.create_index([("sessionId", 1), ("position", 1)])
+            await db_instance.db.queue_entries.create_index([("sessionId", 1), ("userId", 1)])
         except Exception as idx_err:
             logger.warning(f"Index creation note: {idx_err}")
     except Exception as e:

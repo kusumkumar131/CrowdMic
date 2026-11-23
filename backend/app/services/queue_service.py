@@ -27,39 +27,63 @@ async def add_to_queue(session_id: str, user_id: str, user_name: str, user_role:
     uid_str = str(user_id) if user_id is not None else ""
     
     if db is not None:
-        # Check duplicate waiting/speaking entry
-        existing = await db.queue_entries.find_one({
+        # 1. If user is already active in queue, reject duplicate
+        existing_active = await db.queue_entries.find_one({
             "sessionId": {"$in": session_ids},
             "userId": uid_str,
             "status": {"$in": ["waiting", "next", "speaking"]}
         })
-        if existing:
+        if existing_active:
             raise ValueError("Student is already in the queue")
 
-        # Get count to determine position
+        # 2. Determine new position
         waiting_count = await db.queue_entries.count_documents({
             "sessionId": {"$in": session_ids},
             "status": {"$in": ["waiting", "next"]}
         })
         position = waiting_count + 1
 
-        entry = {
-            "sessionId": canonical_id,
-            "userId": uid_str,
-            "userName": user_name,
-            "userRole": user_role,
-            "position": position,
-            "status": "next" if position == 1 else "waiting",
-            "joinedAt": datetime.utcnow().isoformat(),
-            "startedAt": None,
-            "endedAt": None
-        }
-        res = await db.queue_entries.insert_one(entry)
-        entry["_id"] = str(res.inserted_id)
-        entry["id"] = str(res.inserted_id)
-        return entry
+        # 3. Check if an inactive entry exists (completed/cancelled) to reuse it
+        existing_inactive = await db.queue_entries.find_one({
+            "sessionId": {"$in": session_ids},
+            "userId": uid_str
+        })
+
+        if existing_inactive:
+            update_data = {
+                "sessionId": canonical_id,
+                "userName": user_name,
+                "userRole": user_role,
+                "position": position,
+                "status": "next" if position == 1 else "waiting",
+                "joinedAt": datetime.utcnow().isoformat(),
+                "startedAt": None,
+                "endedAt": None
+            }
+            await db.queue_entries.update_one({"_id": existing_inactive["_id"]}, {"$set": update_data})
+            entry = dict(existing_inactive)
+            entry.update(update_data)
+            entry["_id"] = str(entry["_id"])
+            entry["id"] = str(entry["_id"])
+            return entry
+        else:
+            entry = {
+                "sessionId": canonical_id,
+                "userId": uid_str,
+                "userName": user_name,
+                "userRole": user_role,
+                "position": position,
+                "status": "next" if position == 1 else "waiting",
+                "joinedAt": datetime.utcnow().isoformat(),
+                "startedAt": None,
+                "endedAt": None
+            }
+            res = await db.queue_entries.insert_one(entry)
+            entry["_id"] = str(res.inserted_id)
+            entry["id"] = str(res.inserted_id)
+            return entry
     else:
-        # Memory store
+        # Memory store fallback
         for q in memory_store.queue_entries.values():
             if q["sessionId"] in session_ids and str(q.get("userId")) == uid_str and q["status"] in ["waiting", "next", "speaking"]:
                 raise ValueError("Student is already in the queue")

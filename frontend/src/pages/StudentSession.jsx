@@ -34,14 +34,16 @@ const StudentSession = () => {
     }
   }, [sessionCodeParam]);
 
+  const effectiveSessionId = session?.id || sessionCodeParam;
+
   useEffect(() => {
-    if (!session?.id) return;
-    refreshQueue(session.id);
+    if (!effectiveSessionId) return;
+    refreshQueue(effectiveSessionId);
     const interval = setInterval(() => {
-      refreshQueue(session.id);
+      refreshQueue(effectiveSessionId);
     }, 3000);
     return () => clearInterval(interval);
-  }, [session?.id]);
+  }, [effectiveSessionId]);
 
   useEffect(() => {
     webrtcManager.onStateChange = (state) => {

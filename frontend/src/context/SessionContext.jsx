@@ -112,32 +112,58 @@ export const SessionProvider = ({ children }) => {
   const raiseHand = async () => {
     const sId = session?.id || session?.sessionCode;
     const uId = user?.id || user?._id;
+    const uName = user?.name || 'Student';
+
+    // Optimistic UI update so the student immediately sees themselves in queue
+    setQueue((prevQueue) => {
+      const alreadyIn = prevQueue.some((q) => uId && String(q.userId) === String(uId));
+      if (alreadyIn) return prevQueue;
+      const newPos = prevQueue.length + 1;
+      return [
+        ...prevQueue,
+        {
+          id: 'temp-' + Date.now(),
+          sessionId: sId,
+          userId: uId,
+          userName: uName,
+          userRole: user?.role || 'student',
+          position: newPos,
+          status: newPos === 1 ? 'next' : 'waiting'
+        }
+      ];
+    });
+
     socket.emit('raise_hand', {
       sessionId: sId,
       userId: uId,
-      name: user?.name || 'Student',
+      name: uName,
       role: user?.role || 'student'
     });
-    // Dual channel: also call REST API join_queue so it is guaranteed to persist immediately
+
     if (sId) {
       try {
         await api.post(`/sessions/${sId}/queue`);
         await refreshQueue(sId);
       } catch (e) {
-        // Handled if already queued
+        console.log('REST queue note:', e);
       }
     }
   };
 
   const cancelHand = async () => {
     const sId = session?.id || session?.sessionCode;
+    const uId = user?.id || user?._id;
+
+    // Optimistic UI removal
+    setQueue((prevQueue) => prevQueue.filter((q) => uId && String(q.userId) !== String(uId)));
+
     socket.emit('cancel_hand', {});
     if (sId) {
       try {
         await api.delete(`/sessions/${sId}/queue`);
         await refreshQueue(sId);
       } catch (e) {
-        // Handled
+        console.log('REST cancel note:', e);
       }
     }
   };

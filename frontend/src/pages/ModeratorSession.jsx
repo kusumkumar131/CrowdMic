@@ -18,14 +18,16 @@ const ModeratorSession = () => {
     }
   }, [sessionCodeParam]);
 
+  const effectiveSessionId = session?.id || sessionCodeParam;
+
   useEffect(() => {
-    if (!session?.id) return;
-    refreshQueue(session.id);
+    if (!effectiveSessionId) return;
+    refreshQueue(effectiveSessionId);
     const interval = setInterval(() => {
-      refreshQueue(session.id);
+      refreshQueue(effectiveSessionId);
     }, 3000);
     return () => clearInterval(interval);
-  }, [session?.id]);
+  }, [effectiveSessionId]);
 
   return (
     <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
